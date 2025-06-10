@@ -181,6 +181,11 @@ ui <- dashboardPage(
       "Genre Network", 
       tabName = "network",
       icon = icon("project-diagram")
+    ),
+    menuItem(
+      "User Analysis", 
+      tabName = "users",
+      icon = icon("user")
     )
   )),
   
@@ -235,6 +240,64 @@ ui <- dashboardPage(
           solidHeader = TRUE,
           width = 6,
           plotlyOutput("genre_distribution")
+        )
+      )
+    ),
+    
+    # User Analysis Tab
+    tabItem(
+      tabName = "users",
+      fluidRow(
+        column(3,
+               box(
+                 title = "User Selection",
+                 status = "primary",
+                 solidHeader = TRUE,
+                 width = NULL,
+                 selectizeInput("selected_user", "Select User ID:",
+                                choices = NULL,
+                                options = list(placeholder = "Type to search...")),
+                 br(),
+                 h5("User Statistics:"),
+                 verbatimTextOutput("user_stats_text")
+               )
+        ),
+        column(9,
+               fluidRow(
+                 column(4,
+                        valueBoxOutput("user_total_ratings", width = NULL)
+                 ),
+                 column(4,
+                        valueBoxOutput("user_avg_rating", width = NULL)
+                 ),
+                 column(4,
+                        valueBoxOutput("user_active_years", width = NULL)
+                 )
+               ),
+               box(
+                 title = "Rating Distribution",
+                 status = "primary",
+                 solidHeader = TRUE,
+                 width = NULL,
+                 height = "350px",
+                 plotlyOutput("user_rating_dist", height = "300px")
+               )
+        )
+      ),
+      fluidRow(
+        box(
+          title = "Genre Preferences",
+          status = "primary",
+          solidHeader = TRUE,
+          width = 6,
+          plotlyOutput("user_genre_dist", height = "400px")
+        ),
+        box(
+          title = "Rating Timeline",
+          status = "primary",
+          solidHeader = TRUE,
+          width = 6,
+          plotlyOutput("user_timeline", height = "400px")
         )
       )
     ),
@@ -599,6 +662,15 @@ server <- function(input, output, session) {
                          selected = head(movie_choices$movieId, 3))
   })
   
+  # Update user choices for User Analysis tab
+  observe({
+    user_choices <- sort(unique(sample_data()$ratings$userId))
+    updateSelectizeInput(session, "selected_user",
+                         choices = user_choices,
+                         selected = user_choices[1],
+                         server = TRUE)
+  })
+  
   # Movie Series Plot - FIXED VERSION WITHOUT GEOM_SMOOTH
   output$movieSeriesPlot <- renderPlotly({
     req(input$selectedMovies, input$yearRange)
@@ -720,6 +792,111 @@ server <- function(input, output, session) {
     }
     
     output_text
+  })
+  
+  # User Analysis - Reactive data
+  user_data <- reactive({
+    req(input$selected_user)
+    sample_data()$ratings %>%
+      filter(userId == input$selected_user)
+  })
+  
+  # User value boxes
+  output$user_total_ratings <- renderValueBox({
+    valueBox(
+      value = nrow(user_data()),
+      subtitle = "Total Ratings",
+      icon = icon("star"),
+      color = "blue"
+    )
+  })
+  
+  output$user_avg_rating <- renderValueBox({
+    valueBox(
+      value = round(mean(user_data()$rating), 2),
+      subtitle = "Average Rating",
+      icon = icon("chart-line"),
+      color = "green"
+    )
+  })
+  
+  output$user_active_years <- renderValueBox({
+    active_years <- user_data() %>%
+      summarise(years = n_distinct(year)) %>%
+      pull(years)
+    
+    valueBox(
+      value = active_years,
+      subtitle = "Active Years",
+      icon = icon("calendar"),
+      color = "yellow"
+    )
+  })
+  
+  # User statistics text
+  output$user_stats_text <- renderText({
+    user_stats <- user_data()
+    if(nrow(user_stats) > 0) {
+      paste(
+        paste("User ID:", input$selected_user),
+        paste("Total Ratings:", nrow(user_stats)),
+        paste("Average Rating:", round(mean(user_stats$rating), 2)),
+        paste("Rating Range:", min(user_stats$rating), "-", max(user_stats$rating)),
+        paste("First Rating:", format(min(user_stats$date), "%d/%m/%Y")),
+        paste("Last Rating:", format(max(user_stats$date), "%d/%m/%Y")),
+        paste("Most Common Rating:", names(sort(table(user_stats$rating), decreasing = TRUE))[1]),
+        sep = "\n"
+      )
+    } else {
+      "No user selected"
+    }
+  })
+  
+  # User rating distribution
+  output$user_rating_dist <- renderPlotly({
+    p <- user_data() %>%
+      ggplot(aes(x = factor(rating), fill = factor(rating))) +
+      geom_bar() +
+      scale_fill_brewer(type = "seq", palette = "Blues") +
+      labs(title = "Rating Distribution", x = "Rating", y = "Count") +
+      theme_minimal() +
+      theme(legend.position = "none")
+    
+    ggplotly(p)
+  })
+  
+  # User genre distribution
+  output$user_genre_dist <- renderPlotly({
+    user_genres <- user_data() %>%
+      left_join(sample_data()$movies, by = "movieId") %>%
+      separate_rows(genres, sep = "\\|") %>%
+      filter(genres != "(no genres listed)") %>%
+      count(genres, sort = TRUE) %>%
+      top_n(10, n)
+    
+    p <- ggplot(user_genres, aes(x = reorder(genres, n), y = n, fill = genres)) +
+      geom_col() +
+      coord_flip() +
+      labs(title = "Top 10 Genres Rated", x = "Genre", y = "Count") +
+      theme_minimal() +
+      theme(legend.position = "none")
+    
+    ggplotly(p)
+  })
+  
+  # User timeline
+  output$user_timeline <- renderPlotly({
+    timeline_data <- user_data() %>%
+      mutate(month_year = floor_date(date, "month")) %>%
+      count(month_year)
+    
+    p <- ggplot(timeline_data, aes(x = month_year, y = n)) +
+      geom_line(color = "steelblue", size = 1) +
+      geom_point(color = "steelblue", size = 2) +
+      labs(title = "Rating Activity Over Time", x = "Date", y = "Ratings per Month") +
+      theme_minimal()
+    
+    ggplotly(p)
   })
   
   # Reactive network data based on controls
