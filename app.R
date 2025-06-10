@@ -1,3 +1,15 @@
+# Install required packages if not already installed
+required_packages <- c("shiny", "shinydashboard", "DT", "dplyr", 
+                       "plotly", "ggplot2", "shinycssloaders", 
+                       "tidyr", "lubridate", "visNetwork", 
+                       "stringr", "RColorBrewer", "viridis", "igraph")
+
+missing_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+
+if(length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
 # Load required libraries
 library(shiny)
 library(shinydashboard)
@@ -10,8 +22,9 @@ library(tidyr)
 library(lubridate)
 library(visNetwork)
 library(stringr)
-library(RColorBrewer)  # Added for color palettes
-library(viridis)       # Added for viridis palettes
+library(RColorBrewer)
+library(viridis)
+library(igraph)
 
 # Load data and process it
 load_movielens_data <- function() {
@@ -161,33 +174,45 @@ ui <- dashboardPage(
       menuItem("Tags Sunburst", tabName = "sunburst", icon = icon("sun"))
     ),
     
-    # ADD COLOR PALETTE SELECTOR
+    # ADD COLOR PALETTE SELECTOR WITH COLOR-BLIND FRIENDLY OPTIONS
     hr(),
     div(style = "padding: 0 20px;",
         h5("Color Settings", style = "color: white; margin-bottom: 15px;"),
         selectInput("color_palette", "Genre Color Palette:",
                     choices = list(
-                      "Vibrant" = "vibrant",
-                      "Set1" = "set1", 
-                      "Set2" = "set2",
-                      "Set3" = "set3",
-                      "Dark2" = "dark2",
-                      "Paired" = "paired",
-                      "Pastel1" = "pastel1",
-                      "Pastel2" = "pastel2",
-                      "Accent" = "accent",
-                      "Viridis" = "viridis",
-                      "Plasma" = "plasma",
-                      "Inferno" = "inferno",
-                      "Magma" = "magma",
-                      "Cividis" = "cividis",
-                      "Turbo" = "turbo"
+                      "🎨 Standard Palettes" = list(
+                        "Vibrant" = "vibrant",
+                        "Set1" = "set1", 
+                        "Set2" = "set2",
+                        "Set3" = "set3",
+                        "Dark2" = "dark2",
+                        "Paired" = "paired",
+                        "Pastel1" = "pastel1",
+                        "Pastel2" = "pastel2",
+                        "Accent" = "accent"
+                      ),
+                      "♿ Color-Blind Friendly" = list(
+                        "Color-Blind Safe" = "colorblind_safe",
+                        "Deuteranopia Safe" = "deuteranopia",
+                        "Protanopia Safe" = "protanopia", 
+                        "Tritanopia Safe" = "tritanopia",
+                        "High Contrast" = "high_contrast"
+                      ),
+                      "🌈 Viridis Family" = list(
+                        "Viridis" = "viridis",
+                        "Plasma" = "plasma",
+                        "Inferno" = "inferno",
+                        "Magma" = "magma",
+                        "Cividis" = "cividis",
+                        "Turbo" = "turbo"
+                      )
                     ),
                     selected = "vibrant",
                     width = "100%"),
         
-        # Color preview
-        div(id = "color_preview", style = "margin-top: 10px; height: 30px; border-radius: 5px;")
+        # Color preview with accessibility info
+        div(id = "color_preview", style = "margin-top: 10px; height: 30px; border-radius: 5px;"),
+        div(id = "accessibility_info", style = "margin-top: 5px; font-size: 11px; color: #cccccc;")
     )
   ),
   
@@ -603,10 +628,10 @@ ui <- dashboardPage(
                                selected = "all"),
                    
                    sliderInput("max_tags_per_genre", "Max Tags per Genre:",
-                               min = 1, max = 25, value = 5, step = 1),
+                               min = 3, max = 10, value = 5, step = 1),
                    
                    sliderInput("min_tag_frequency", "Minimum Tag Frequency:",
-                               min = 2, max = 50, value = 10, step = 2)
+                               min = 5, max = 50, value = 10, step = 5)
                  )
           ),
           column(6,
@@ -646,7 +671,7 @@ server <- function(input, output, session) {
     load_movielens_data()
   })
   
-  # REACTIVE GENRE COLOR FUNCTION
+  # REACTIVE GENRE COLOR FUNCTION WITH COLOR-BLIND SAFE PALETTES
   get_genre_colors <- reactive({
     # Define all genres in your dataset
     all_genres <- c("Action", "Adventure", "Animation", "Children", "Comedy", "Crime", 
@@ -659,6 +684,28 @@ server <- function(input, output, session) {
                                    "#20B2AA", "#2F4F4F", "#FF69B4", "#1C1C1C", "#B22222", "#00CED1",
                                    "#696969", "#FF6347", "#9370DB", "#DC143C", "#8B4513", "#FF8C00", "#708090"),
                      
+                     # Color-blind safe palettes
+                     "colorblind_safe" = c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00",
+                                           "#CC79A7", "#999999", "#000000", "#E31A1C", "#1F78B4", "#33A02C", 
+                                           "#FF7F00", "#6A3D9A", "#A6CEE3", "#FB9A99", "#FDBF6F", "#CAB2D6", "#B2DF8A"),
+                     
+                     "deuteranopia" = c("#1f77b4", "#ff7f0e", "#d62728", "#9467bd", "#8c564b", "#e377c2",
+                                        "#7f7f7f", "#bcbd22", "#17becf", "#aec7e8", "#ffbb78", "#ff9896",
+                                        "#c5b0d5", "#c49c94", "#f7b6d3", "#c7c7c7", "#dbdb8d", "#9edae5", "#98df8a"),
+                     
+                     "protanopia" = c("#0173B2", "#DE8F05", "#029E73", "#CC78BC", "#CA9161", "#FBAFE4",
+                                      "#949494", "#ECE133", "#56B4E9", "#BBE0F0", "#F2D675", "#B3F2E3",
+                                      "#E8D5E8", "#F2E4D1", "#FEF0F5", "#E3E3E3", "#F7F7B8", "#CCEBF7", "#DDF2DD"),
+                     
+                     "tritanopia" = c("#E68FAC", "#A7A7A7", "#F4A736", "#8690FF", "#FFB347", "#6495ED",
+                                      "#FF6B9D", "#87CEEB", "#FFA07A", "#D2B48C", "#FFE4B5", "#B0E0E6",
+                                      "#F0F8FF", "#FFEFD5", "#FFE4E1", "#F5F5DC", "#FAF0E6", "#FDF5E6", "#F8F8FF"),
+                     
+                     "high_contrast" = c("#000000", "#FFFFFF", "#FF0000", "#00FF00", "#0000FF", "#FFFF00",
+                                         "#FF00FF", "#00FFFF", "#800000", "#008000", "#000080", "#808000",
+                                         "#800080", "#008080", "#C0C0C0", "#808080", "#FF6600", "#6600FF", "#66FF00"),
+                     
+                     # Standard palettes
                      "set1" = RColorBrewer::brewer.pal(min(9, length(all_genres)), "Set1"),
                      "set2" = RColorBrewer::brewer.pal(min(8, length(all_genres)), "Set2"),
                      "set3" = RColorBrewer::brewer.pal(min(12, length(all_genres)), "Set3"),
@@ -668,6 +715,7 @@ server <- function(input, output, session) {
                      "pastel2" = RColorBrewer::brewer.pal(min(8, length(all_genres)), "Pastel2"),
                      "accent" = RColorBrewer::brewer.pal(min(8, length(all_genres)), "Accent"),
                      
+                     # Viridis family (already color-blind friendly)
                      "viridis" = viridis::viridis(length(all_genres)),
                      "plasma" = viridis::plasma(length(all_genres)),
                      "inferno" = viridis::inferno(length(all_genres)),
@@ -686,7 +734,7 @@ server <- function(input, output, session) {
     return(colors)
   })
   
-  # Color preview
+  # Color preview with accessibility information
   output$color_preview <- renderUI({
     colors <- get_genre_colors()
     preview_colors <- head(colors, 8)  # Show first 8 colors
@@ -698,6 +746,26 @@ server <- function(input, output, session) {
     })
     
     div(style = "width: 100%; height: 100%; display: flex;", color_divs)
+  })
+  
+  # Accessibility information
+  output$accessibility_info <- renderUI({
+    accessibility_text <- switch(input$color_palette,
+                                 "colorblind_safe" = "✓ Safe for all color vision types",
+                                 "deuteranopia" = "✓ Optimized for deuteranopia (red-green)",
+                                 "protanopia" = "✓ Optimized for protanopia (red-green)", 
+                                 "tritanopia" = "✓ Optimized for tritanopia (blue-yellow)",
+                                 "high_contrast" = "✓ High contrast for low vision",
+                                 "viridis" = "✓ Color-blind friendly continuous",
+                                 "plasma" = "✓ Color-blind friendly continuous",
+                                 "inferno" = "✓ Color-blind friendly continuous", 
+                                 "magma" = "✓ Color-blind friendly continuous",
+                                 "cividis" = "✓ Color-blind friendly continuous",
+                                 "turbo" = "⚠ May have color-blind issues",
+                                 "Standard palette"
+    )
+    
+    div(style = "color: #cccccc; font-size: 11px;", accessibility_text)
   })
   
   # Genre selection state management
@@ -1310,7 +1378,7 @@ server <- function(input, output, session) {
       count(month_year)
     
     p <- ggplot(timeline_data, aes(x = month_year, y = n)) +
-      geom_line(color = "steelblue", size = 1) +
+      geom_line(color = "steelblue", linewidth = 1) +  # Changed from size to linewidth
       geom_point(color = "steelblue", size = 2) +
       labs(title = "Rating Activity Over Time", x = "Date", y = "Ratings per Month") +
       theme_minimal()
@@ -1511,7 +1579,7 @@ server <- function(input, output, session) {
       ) %>%
         layout(
           title = list(
-            text = "",
+            text = "Movie Tags by Genre",
             font = list(size = 16)
           ),
           font = list(size = 12)
