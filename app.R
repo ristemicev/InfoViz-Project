@@ -8,6 +8,8 @@ library(ggplot2)
 library(shinycssloaders)
 library(tidyr)
 library(lubridate)
+library(visNetwork)
+library(stringr)
 
 # Load data and process it
 load_movielens_data <- function() {
@@ -66,6 +68,100 @@ load_movielens_data <- function() {
   ))
 }
 
+# Function to create genre network data
+create_genre_network <- function(movies, min_connections = 15) {
+  tryCatch({
+    # Separate genres into individual rows
+    genre_data <- movies %>%
+      separate_rows(genres, sep = "\\|") %>%
+      filter(genres != "(no genres listed)", !is.na(genres))
+    
+    # Create genre pairs (edges) - only strong connections
+    genre_pairs <- genre_data %>%
+      select(movieId, genres) %>%
+      inner_join(genre_data %>% select(movieId, genres), 
+                 by = "movieId", relationship = "many-to-many") %>%
+      filter(genres.x < genres.y) %>%
+      count(genres.x, genres.y, name = "weight") %>%
+      rename(from = genres.x, to = genres.y) %>%
+      filter(weight >= min_connections) %>%
+      arrange(desc(weight)) %>%
+      slice_head(n = 50)  # Limit to top 50 connections
+    
+    # Define distinct colors for genres
+    genre_colors <- c(
+      "Action" = "#FF4444", "Adventure" = "#4488FF", "Animation" = "#AA44FF",
+      "Children" = "#44FF44", "Comedy" = "#FFB347", "Crime" = "#8B4B8B",
+      "Documentary" = "#20B2AA", "Drama" = "#2F4F4F", "Fantasy" = "#FF69B4",
+      "Film-Noir" = "#1C1C1C", "Horror" = "#B22222", "Musical" = "#00CED1",
+      "Mystery" = "#696969", "Romance" = "#FF6347", "Sci-Fi" = "#9370DB",
+      "Thriller" = "#DC143C", "War" = "#8B4513", "Western" = "#FF8C00",
+      "IMAX" = "#708090"
+    )
+    
+    # Create ALL genre nodes
+    all_nodes <- genre_data %>%
+      count(genres, name = "movie_count") %>%
+      mutate(
+        id = genres,
+        label = genres,
+        title = paste0(
+          "<div style='text-align: center; font-family: Arial; padding: 10px;'>",
+          "<h3 style='margin: 5px; color: #2C3E50;'>", genres, "</h3>",
+          "<p style='margin: 5px; font-size: 16px;'><strong>", scales::comma(movie_count), "</strong> movies</p>",
+          "<p style='margin: 3px; font-size: 12px; color: #7F8C8D;'>",
+          ifelse(genres %in% c(genre_pairs$from, genre_pairs$to), 
+                 "Click to highlight connections", "Standalone genre"),
+          "</p>",
+          "</div>"
+        ),
+        value = movie_count,
+        size = pmax(30, pmin(80, sqrt(movie_count) * 4)),
+        color = ifelse(genres %in% names(genre_colors), 
+                       genre_colors[genres], "#95A5A6"),
+        borderWidth = 4,
+        font.size = 16,
+        font.color = "#FFFFFF",
+        font.strokeWidth = 2,
+        font.strokeColor = "#000000"
+      ) %>%
+      arrange(desc(movie_count)) %>%
+      select(id, label, title, value, size, color, borderWidth, font.size, font.color, font.strokeWidth, font.strokeColor)
+    
+    # Only include edges that reference existing nodes
+    edges <- genre_pairs %>%
+      filter(from %in% all_nodes$id, to %in% all_nodes$id) %>%
+      mutate(
+        # Smooth width calculation based on weight
+        width = pmax(1, pmin(8, (weight - min(weight)) / (max(weight) - min(weight)) * 7 + 1)),
+        title = paste0(
+          "<div style='text-align: center; font-family: Arial; padding: 8px;'>",
+          "<h4 style='margin: 5px; color: #2C3E50;'>", from, " + ", to, "</h4>",
+          "<p style='margin: 3px; font-size: 16px;'><strong>", weight, "</strong> movies together</p>",
+          "</div>"
+        ),
+        # Blue gradient from light to dark based on weight
+        color_intensity = (weight - min(weight)) / (max(weight) - min(weight)),
+        color = rgb(
+          red = 0.1 + (1 - color_intensity) * 0.7,    # Light blue to dark
+          green = 0.4 + (1 - color_intensity) * 0.4,  # Adjust green component
+          blue = 0.9,                                  # Keep blue strong
+          alpha = 0.6 + color_intensity * 0.4         # Transparency gradient
+        )
+      ) %>%
+      select(from, to, width, title, color)
+    
+    return(list(nodes = all_nodes, edges = edges))
+    
+  }, error = function(e) {
+    print(paste("Error in create_genre_network:", e$message))
+    return(list(
+      nodes = data.frame(id = character(), label = character(), stringsAsFactors = FALSE),
+      edges = data.frame(from = character(), to = character(), stringsAsFactors = FALSE)
+    ))
+  })
+}
+
 # Define UI
 ui <- dashboardPage(
   dashboardHeader(title = "InfoViz Project"),
@@ -80,6 +176,11 @@ ui <- dashboardPage(
       "Movie Comparison", 
       tabName = "movies",
       icon = icon("film")
+    ),
+    menuItem(
+      "Genre Network", 
+      tabName = "network",
+      icon = icon("project-diagram")
     )
   )),
   
@@ -138,6 +239,94 @@ ui <- dashboardPage(
       )
     ),
     
+    # Genre Network Tab
+    tabItem(
+      tabName = "network",
+      fluidRow(
+        column(3,
+               box(
+                 title = "Network Controls", 
+                 status = "primary", 
+                 solidHeader = TRUE,
+                 width = NULL,
+                 selectInput("layout_type", "Layout Style:",
+                             choices = list(
+                               "Force-directed" = "layout_with_fr",
+                               "Circular" = "layout_in_circle", 
+                               "Grid" = "layout_on_grid"
+                             ),
+                             selected = "layout_with_fr"),
+                 
+                 sliderInput("min_connections", "Minimum Co-occurrences:",
+                             min = 10, max = 300, value = 30, step = 10),
+                 
+                 hr(),
+                 
+                 h5("Network Statistics:"),
+                 verbatimTextOutput("network_stats", placeholder = TRUE)
+               ),
+               
+               # MOVED: How to Use box right below controls
+               box(
+                 title = "How to Use This Visualization",
+                 status = "info",
+                 width = NULL,
+                 tags$ul(
+                   tags$li(strong("Node size:"), " Larger circles = more movies in that genre"),
+                   tags$li(strong("Edge thickness:"), " Thicker lines = genres appear together more often"),
+                   tags$li(strong("Edge colors:"), " See connection strength legend"),
+                   tags$li(strong("Hover:"), " Mouse over nodes/edges for detailed information"),
+                   tags$li(strong("Click:"), " Click nodes to highlight their connections"),
+                   tags$li(strong("Navigation:"), " Use mouse wheel to zoom, drag to pan")
+                 )
+               )
+        ),
+        column(9,
+               box(
+                 title = "Interactive Genre Network Graph", 
+                 status = "primary", 
+                 solidHeader = TRUE,
+                 width = NULL,
+                 height = "600px",
+                 visNetworkOutput("genre_network", height = "500px")
+               )
+        )
+      ),
+      fluidRow(
+        column(6,
+               box(
+                 title = "Legend - All Genres",
+                 status = "info",
+                 width = NULL,
+                 DT::dataTableOutput("genre_legend")
+               )
+        ),
+        column(6,
+               box(
+                 title = "Connection Strength Legend",
+                 status = "info",
+                 width = NULL,
+                 div(
+                   style = "padding: 10px;",
+                   h5("Edge Gradient (Blue):"),
+                   div(style = "margin: 15px 0;",
+                       div(style = "width: 100%; height: 20px; background: linear-gradient(to right, rgba(26,107,230,0.6), rgba(13,54,115,1)); border: 1px solid #ccc; border-radius: 5px;")
+                   ),
+                   div(style = "display: flex; justify-content: space-between; font-size: 12px; margin-top: 5px;",
+                       span("Weak connections"),
+                       span("Strong connections")
+                   ),
+                   hr(),
+                   p(style = "font-size: 13px; color: #666;", 
+                     "• Darker blue = more movies together", br(),
+                     "• Thicker lines = stronger connections", br(),
+                     "• Both color and thickness increase with strength")
+                 )
+               )
+        )
+      )
+    ),
+    
     # Movie Comparison Tab
     tabItem(
       tabName = "movies", 
@@ -185,7 +374,7 @@ ui <- dashboardPage(
           
           # Row for additional options
           fluidRow(
-            column(6, checkboxInput("showTrend", "Show Trend Line", value = FALSE)),
+            column(6, checkboxInput("showTrend", "Show Trend Line", value = TRUE)),
             column(6, checkboxInput("showPoints", "Show Data Points", value = TRUE))
           )
         )
@@ -531,6 +720,102 @@ server <- function(input, output, session) {
     }
     
     output_text
+  })
+  
+  # Reactive network data based on controls
+  network_data_reactive <- reactive({
+    create_genre_network(sample_data()$movies, input$min_connections)
+  })
+  
+  # Genre Network
+  output$genre_network <- renderVisNetwork({
+    tryCatch({
+      network_data <- network_data_reactive()
+      
+      # Ensure we have valid network data
+      if(nrow(network_data$nodes) == 0 || nrow(network_data$edges) == 0) {
+        return(NULL)
+      }
+      
+      # Create the network with improved styling
+      vis <- visNetwork(network_data$nodes, network_data$edges) %>%
+        visIgraphLayout(layout = input$layout_type, physics = FALSE) %>%
+        visNodes(
+          shape = "circle",
+          shadow = list(enabled = TRUE, color = "rgba(0,0,0,0.3)", size = 8, x = 2, y = 2),
+          borderWidth = 3,
+          borderWidthSelected = 5,
+          font = list(size = 16, color = "#FFFFFF", face = "Arial", strokeWidth = 2, strokeColor = "#000000")
+        ) %>%
+        visEdges(
+          smooth = list(enabled = TRUE, type = "continuous", roundness = 0.2),
+          physics = FALSE,
+          selectionWidth = 3,
+          hoverWidth = 2
+        ) %>%
+        visPhysics(enabled = FALSE) %>%
+        visOptions(
+          highlightNearest = list(enabled = TRUE, hover = TRUE, degree = 1, labelOnly = FALSE),
+          clickToUse = FALSE
+        ) %>%
+        visInteraction(
+          navigationButtons = TRUE,
+          hover = TRUE,
+          selectConnectedEdges = TRUE,
+          tooltipDelay = 100,
+          zoomView = TRUE,
+          dragView = TRUE
+        ) %>%
+        visLayout(randomSeed = 123)
+      
+      vis
+      
+    }, error = function(e) {
+      print(paste("Error in genre network:", e$message))
+      return(NULL)
+    })
+  })
+  
+  # Network statistics
+  output$network_stats <- renderText({
+    network_data <- network_data_reactive()
+    if(nrow(network_data$nodes) > 0 && nrow(network_data$edges) > 0) {
+      paste(
+        paste("Genres:", nrow(network_data$nodes)),
+        paste("Connections:", nrow(network_data$edges)),
+        paste("Avg connections per genre:", round(nrow(network_data$edges) * 2 / nrow(network_data$nodes), 1)),
+        sep = "\n"
+      )
+    } else {
+      "No data to display"
+    }
+  })
+  
+  # Genre legend table
+  output$genre_legend <- DT::renderDataTable({
+    network_data <- network_data_reactive()
+    if(nrow(network_data$nodes) > 0) {
+      legend_data <- network_data$nodes %>%
+        select(Genre = label, `Number of Movies` = value, Color = color) %>%
+        arrange(desc(`Number of Movies`)) %>%
+        mutate(
+          Color = paste0('<div style="width:20px;height:20px;background-color:', Color, 
+                         ';border:1px solid #ccc;border-radius:50%;display:inline-block;"></div>')
+        )
+      
+      DT::datatable(legend_data, 
+                    escape = FALSE, 
+                    options = list(
+                      pageLength = 20,
+                      dom = 't',
+                      ordering = TRUE,
+                      columnDefs = list(
+                        list(className = 'dt-center', targets = c(1, 2))
+                      )
+                    ),
+                    rownames = FALSE) %>%
+        DT::formatCurrency(columns = "Number of Movies", currency = "", digits = 0)
+    }
   })
 }
 
