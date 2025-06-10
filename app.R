@@ -165,7 +165,8 @@ ui <- dashboardPage(
     menuItem("Movie Comparison", tabName = "movies", icon = icon("film")),
     menuItem("Genre Network", tabName = "network", icon = icon("project-diagram")),
     menuItem("User Analysis", tabName = "users", icon = icon("user")),
-    menuItem("Movie Explorer", tabName = "explorer", icon = icon("search"))
+    menuItem("Movie Explorer", tabName = "explorer", icon = icon("search")),
+    menuItem("Tags Sunburst", tabName = "sunburst", icon = icon("sun"))
   )),
   
   dashboardBody(
@@ -267,7 +268,7 @@ ui <- dashboardPage(
                    sliderInput("year_filter", "Release Year Range:",
                                min = 1920, max = 2018, value = c(1990, 2018), step = 1),
                    
-                   # Genre selection with popup
+                   # COMPACT: Genre selection with popup
                    div(
                      h5("Selected Genres:"),
                      div(
@@ -528,6 +529,71 @@ ui <- dashboardPage(
               withSpinner(DT::dataTableOutput("movieStats"))),
           box(width = 6, title = "Rating Analysis", status = "info",
               withSpinner(verbatimTextOutput("ratingAnalysis")))
+        )
+      ),
+      
+      # Tags Sunburst Tab
+      tabItem(
+        tabName = "sunburst",
+        fluidRow(
+          box(
+            title = "Interactive Sunburst Chart of Movie Tags",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 12,
+            height = "600px",
+            withSpinner(plotlyOutput("tags_sunburst", height = "550px"))
+          )
+        ),
+        fluidRow(
+          column(6,
+                 box(
+                   title = "Sunburst Controls",
+                   status = "info",
+                   solidHeader = TRUE,
+                   width = NULL,
+                   selectInput("sunburst_genres", "Select Genres to Display:",
+                               choices = c("All Popular Genres" = "all",
+                                           "Action" = "Action",
+                                           "Comedy" = "Comedy", 
+                                           "Drama" = "Drama",
+                                           "Thriller" = "Thriller",
+                                           "Romance" = "Romance",
+                                           "Horror" = "Horror",
+                                           "Sci-Fi" = "Sci-Fi"),
+                               selected = "all"),
+                   
+                   sliderInput("max_tags_per_genre", "Max Tags per Genre:",
+                               min = 3, max = 10, value = 5, step = 1),
+                   
+                   sliderInput("min_tag_frequency", "Minimum Tag Frequency:",
+                               min = 5, max = 50, value = 10, step = 5)
+                 )
+          ),
+          column(6,
+                 box(
+                   title = "How to Use This Visualization",
+                   status = "info",
+                   solidHeader = TRUE,
+                   width = NULL,
+                   tags$div(
+                     tags$h5("Understanding the Sunburst:"),
+                     tags$ul(
+                       tags$li(strong("Inner Ring:"), " Movie genres"),
+                       tags$li(strong("Outer Ring:"), " Most common tags within each genre"),
+                       tags$li(strong("Size:"), " Represents frequency of tags"),
+                       tags$li(strong("Colors:"), " Different shades for each genre family")
+                     ),
+                     
+                     tags$h5("Interaction:"),
+                     tags$ul(
+                       tags$li(strong("Click:"), " Click on a genre segment to zoom in"),
+                       tags$li(strong("Hover:"), " See detailed tag information"),
+                       tags$li(strong("Controls:"), " Adjust genre selection and tag limits")
+                     )
+                   )
+                 )
+          )
         )
       )
     )
@@ -1245,6 +1311,86 @@ server <- function(input, output, session) {
                     rownames = FALSE) %>%
         DT::formatCurrency(columns = "Number of Movies", currency = "", digits = 0)
     }
+  })
+  
+  # Tags Sunburst Chart
+  output$tags_sunburst <- renderPlotly({
+    tryCatch({
+      # Filter genres based on selection
+      selected_genres <- if(input$sunburst_genres == "all") {
+        c("Drama", "Comedy", "Action", "Thriller", "Romance", "Horror", "Sci-Fi", "Adventure")
+      } else {
+        input$sunburst_genres
+      }
+      
+      # Create genre-tag data
+      genre_tag_data <- sample_data()$tags %>%
+        left_join(sample_data()$movies %>% select(movieId, genres), by = "movieId") %>%
+        separate_rows(genres, sep = "\\|") %>%
+        filter(genres != "(no genres listed)", !is.na(genres)) %>%
+        filter(genres %in% selected_genres) %>%
+        count(genres, tag, sort = TRUE) %>%
+        filter(n >= input$min_tag_frequency) %>%
+        group_by(genres) %>%
+        top_n(input$max_tags_per_genre, n) %>%
+        ungroup()
+      
+      if(nrow(genre_tag_data) == 0) {
+        # Return empty plot with message
+        return(plotly_empty() %>%
+                 layout(title = "No data available with current filters. Try reducing minimum tag frequency."))
+      }
+      
+      # Prepare data for sunburst
+      sunburst_data <- bind_rows(
+        # Parent nodes (genres)
+        genre_tag_data %>%
+          group_by(genres) %>%
+          summarise(total = sum(n), .groups = 'drop') %>%
+          mutate(
+            ids = genres,
+            labels = genres,
+            parents = "",
+            values = total,
+            level = "genre"
+          ),
+        
+        # Child nodes (tags)
+        genre_tag_data %>%
+          mutate(
+            ids = paste(genres, tag, sep = "-"),
+            labels = tag,
+            parents = genres,
+            values = n,
+            level = "tag"
+          )
+      )
+      
+      # Create the sunburst plot
+      plot_ly(
+        data = sunburst_data,
+        ids = ~ids,
+        labels = ~labels,
+        parents = ~parents,
+        values = ~values,
+        type = 'sunburst',
+        branchvalues = 'total',
+        hovertemplate = '<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percentParent}<extra></extra>',
+        maxdepth = 2
+      ) %>%
+        layout(
+          title = list(
+            text = "Movie Tags by Genre",
+            font = list(size = 16)
+          ),
+          font = list(size = 12)
+        )
+      
+    }, error = function(e) {
+      print(paste("Error in tags sunburst:", e$message))
+      return(plotly_empty() %>%
+               layout(title = "Error creating sunburst chart. Please check your data."))
+    })
   })
 }
 
