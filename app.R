@@ -10,6 +10,8 @@ library(tidyr)
 library(lubridate)
 library(visNetwork)
 library(stringr)
+library(RColorBrewer)  # Added for color palettes
+library(viridis)       # Added for viridis palettes
 
 # Load data and process it
 load_movielens_data <- function() {
@@ -64,8 +66,8 @@ load_movielens_data <- function() {
   ))
 }
 
-# Function to create genre network data
-create_genre_network <- function(movies, min_connections = 15) {
+# Function to create genre network data - Updated to use reactive colors
+create_genre_network <- function(movies, min_connections = 15, genre_colors) {
   tryCatch({
     # Separate genres into individual rows
     genre_data <- movies %>%
@@ -84,18 +86,7 @@ create_genre_network <- function(movies, min_connections = 15) {
       arrange(desc(weight)) %>%
       slice_head(n = 50)  # Limit to top 50 connections
     
-    # Define distinct colors for genres
-    genre_colors <- c(
-      "Action" = "#FF4444", "Adventure" = "#4488FF", "Animation" = "#AA44FF",
-      "Children" = "#44FF44", "Comedy" = "#FFB347", "Crime" = "#8B4B8B",
-      "Documentary" = "#20B2AA", "Drama" = "#2F4F4F", "Fantasy" = "#FF69B4",
-      "Film-Noir" = "#1C1C1C", "Horror" = "#B22222", "Musical" = "#00CED1",
-      "Mystery" = "#696969", "Romance" = "#FF6347", "Sci-Fi" = "#9370DB",
-      "Thriller" = "#DC143C", "War" = "#8B4513", "Western" = "#FF8C00",
-      "IMAX" = "#708090"
-    )
-    
-    # Create ALL genre nodes
+    # Create ALL genre nodes with consistent colors
     all_nodes <- genre_data %>%
       count(genres, name = "movie_count") %>%
       mutate(
@@ -114,7 +105,7 @@ create_genre_network <- function(movies, min_connections = 15) {
         value = movie_count,
         size = pmax(30, pmin(80, sqrt(movie_count) * 4)),
         color = ifelse(genres %in% names(genre_colors), 
-                       genre_colors[genres], "#95A5A6"),
+                       genre_colors[genres], "#CCCCCC"),  # Use consistent colors
         borderWidth = 4,
         font.size = 16,
         font.color = "#FFFFFF",
@@ -160,17 +151,48 @@ create_genre_network <- function(movies, min_connections = 15) {
 ui <- dashboardPage(
   dashboardHeader(title = "InfoViz Project"),
   
-  dashboardSidebar(sidebarMenu(
-    menuItem("Summary Statistics", tabName = "summary", icon = icon("chart-bar")),
-    menuItem("Movie Comparison", tabName = "movies", icon = icon("film")),
-    menuItem("Genre Network", tabName = "network", icon = icon("project-diagram")),
-    menuItem("User Analysis", tabName = "users", icon = icon("user")),
-    menuItem("Movie Explorer", tabName = "explorer", icon = icon("search")),
-    menuItem("Tags Sunburst", tabName = "sunburst", icon = icon("sun"))
-  )),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Summary Statistics", tabName = "summary", icon = icon("chart-bar")),
+      menuItem("Movie Comparison", tabName = "movies", icon = icon("film")),
+      menuItem("Genre Network", tabName = "network", icon = icon("project-diagram")),
+      menuItem("User Analysis", tabName = "users", icon = icon("user")),
+      menuItem("Movie Explorer", tabName = "explorer", icon = icon("search")),
+      menuItem("Tags Sunburst", tabName = "sunburst", icon = icon("sun"))
+    ),
+    
+    # ADD COLOR PALETTE SELECTOR
+    hr(),
+    div(style = "padding: 0 20px;",
+        h5("Color Settings", style = "color: white; margin-bottom: 15px;"),
+        selectInput("color_palette", "Genre Color Palette:",
+                    choices = list(
+                      "Vibrant" = "vibrant",
+                      "Set1" = "set1", 
+                      "Set2" = "set2",
+                      "Set3" = "set3",
+                      "Dark2" = "dark2",
+                      "Paired" = "paired",
+                      "Pastel1" = "pastel1",
+                      "Pastel2" = "pastel2",
+                      "Accent" = "accent",
+                      "Viridis" = "viridis",
+                      "Plasma" = "plasma",
+                      "Inferno" = "inferno",
+                      "Magma" = "magma",
+                      "Cividis" = "cividis",
+                      "Turbo" = "turbo"
+                    ),
+                    selected = "vibrant",
+                    width = "100%"),
+        
+        # Color preview
+        div(id = "color_preview", style = "margin-top: 10px; height: 30px; border-radius: 5px;")
+    )
+  ),
   
   dashboardBody(
-    # Add custom CSS for modal styling
+    # Add custom CSS for modal styling and button colors
     tags$head(
       tags$style(HTML("
         .modal-dialog { margin-top: 50px; }
@@ -189,6 +211,14 @@ ui <- dashboardPage(
           min-height: 40px;
           max-height: 80px;
           overflow-y: auto;
+        }
+        
+        /* Force white text on all buttons */
+        .btn-primary, .btn-warning, .btn-info, .btn-success, .btn-danger {
+          color: white !important;
+        }
+        .btn-primary:hover, .btn-warning:hover, .btn-info:hover, .btn-success:hover, .btn-danger:hover {
+          color: white !important;
         }
       "))
     ),
@@ -222,7 +252,7 @@ ui <- dashboardPage(
           
           box(
             title = "Top 10 Most Rated Movies",
-            status = "info",
+            status = "primary",
             solidHeader = TRUE,
             width = 6,
             DT::dataTableOutput("top_movies")
@@ -232,7 +262,7 @@ ui <- dashboardPage(
         fluidRow(
           box(
             title = "Rating Distribution",
-            status = "success",
+            status = "primary",
             solidHeader = TRUE,
             width = 6,
             plotlyOutput("rating_distribution")
@@ -240,7 +270,7 @@ ui <- dashboardPage(
           
           box(
             title = "Genre Distribution",
-            status = "warning",
+            status = "primary",
             solidHeader = TRUE,
             width = 6,
             plotlyOutput("genre_distribution")
@@ -280,7 +310,7 @@ ui <- dashboardPage(
                      div(style = "display: flex; gap: 10px;",
                          actionButton("btn_select_genres", "Select Genres", 
                                       icon = icon("tags"), class = "btn-primary btn-sm"),
-                         actionButton("btn_reset", "Reset All", class = "btn-sm btn-warning")
+                         actionButton("btn_reset", "Reset All", class = "btn-sm btn-danger")
                      ),
                      br()
                    ),
@@ -310,8 +340,8 @@ ui <- dashboardPage(
         
         fluidRow(
           box(
-            title = "Top Movies (Filtered Results)",
-            status = "info",
+            title = "Filtered Results",
+            status = "primary",
             solidHeader = TRUE,
             width = 12,
             DT::dataTableOutput("filtered_movies_table")
@@ -321,7 +351,7 @@ ui <- dashboardPage(
         fluidRow(
           box(
             title = "Filter Summary",
-            status = "info",
+            status = "primary",
             solidHeader = TRUE,
             width = 6,
             verbatimTextOutput("filter_summary")
@@ -441,8 +471,9 @@ ui <- dashboardPage(
                  
                  box(
                    title = "How to Use This Visualization",
-                   status = "info",
+                   status = "primary",
                    width = NULL,
+                   solidHeader = TRUE,
                    tags$ul(
                      tags$li(strong("Node size:"), " Larger circles = more movies in that genre"),
                      tags$li(strong("Edge thickness:"), " Thicker lines = genres appear together more often"),
@@ -467,16 +498,18 @@ ui <- dashboardPage(
           column(6,
                  box(
                    title = "Legend - All Genres",
-                   status = "info",
+                   status = "primary",
                    width = NULL,
+                   solidHeader = TRUE,
                    DT::dataTableOutput("genre_legend")
                  )
           ),
           column(6,
                  box(
                    title = "Connection Strength Legend",
-                   status = "info",
+                   status = "primary",
                    width = NULL,
+                   solidHeader = TRUE,
                    div(
                      style = "padding: 10px;",
                      h5("Edge Gradient (Blue):"),
@@ -521,13 +554,19 @@ ui <- dashboardPage(
         ), 
         
         fluidRow(
-          box(width = 12, withSpinner(plotlyOutput("movieSeriesPlot", height = "500px")))
+          box(
+            width = 12, 
+            title = "Movie Rating Trends",
+            status = "primary",
+            solidHeader = TRUE,
+            withSpinner(plotlyOutput("movieSeriesPlot", height = "500px"))
+          )
         ), 
         
         fluidRow(
-          box(width = 6, title = "Movie Statistics", status = "info",
+          box(width = 6, title = "Movie Statistics", status = "primary", solidHeader = TRUE,
               withSpinner(DT::dataTableOutput("movieStats"))),
-          box(width = 6, title = "Rating Analysis", status = "info",
+          box(width = 6, title = "Rating Analysis", status = "primary", solidHeader = TRUE,
               withSpinner(verbatimTextOutput("ratingAnalysis")))
         )
       ),
@@ -549,7 +588,7 @@ ui <- dashboardPage(
           column(6,
                  box(
                    title = "Sunburst Controls",
-                   status = "info",
+                   status = "primary",
                    solidHeader = TRUE,
                    width = NULL,
                    selectInput("sunburst_genres", "Select Genres to Display:",
@@ -564,16 +603,16 @@ ui <- dashboardPage(
                                selected = "all"),
                    
                    sliderInput("max_tags_per_genre", "Max Tags per Genre:",
-                               min = 3, max = 10, value = 5, step = 1),
+                               min = 1, max = 25, value = 5, step = 1),
                    
                    sliderInput("min_tag_frequency", "Minimum Tag Frequency:",
-                               min = 5, max = 50, value = 10, step = 5)
+                               min = 2, max = 50, value = 10, step = 2)
                  )
           ),
           column(6,
                  box(
                    title = "How to Use This Visualization",
-                   status = "info",
+                   status = "primary",
                    solidHeader = TRUE,
                    width = NULL,
                    tags$div(
@@ -605,6 +644,60 @@ server <- function(input, output, session) {
   # Load data when app starts
   sample_data <- reactive({
     load_movielens_data()
+  })
+  
+  # REACTIVE GENRE COLOR FUNCTION
+  get_genre_colors <- reactive({
+    # Define all genres in your dataset
+    all_genres <- c("Action", "Adventure", "Animation", "Children", "Comedy", "Crime", 
+                    "Documentary", "Drama", "Fantasy", "Film-Noir", "Horror", "Musical", 
+                    "Mystery", "Romance", "Sci-Fi", "Thriller", "War", "Western", "IMAX")
+    
+    # Generate colors based on selected palette
+    colors <- switch(input$color_palette,
+                     "vibrant" = c("#FF4444", "#4488FF", "#AA44FF", "#44FF44", "#FFB347", "#8B4B8B",
+                                   "#20B2AA", "#2F4F4F", "#FF69B4", "#1C1C1C", "#B22222", "#00CED1",
+                                   "#696969", "#FF6347", "#9370DB", "#DC143C", "#8B4513", "#FF8C00", "#708090"),
+                     
+                     "set1" = RColorBrewer::brewer.pal(min(9, length(all_genres)), "Set1"),
+                     "set2" = RColorBrewer::brewer.pal(min(8, length(all_genres)), "Set2"),
+                     "set3" = RColorBrewer::brewer.pal(min(12, length(all_genres)), "Set3"),
+                     "dark2" = RColorBrewer::brewer.pal(min(8, length(all_genres)), "Dark2"),
+                     "paired" = RColorBrewer::brewer.pal(min(12, length(all_genres)), "Paired"),
+                     "pastel1" = RColorBrewer::brewer.pal(min(9, length(all_genres)), "Pastel1"),
+                     "pastel2" = RColorBrewer::brewer.pal(min(8, length(all_genres)), "Pastel2"),
+                     "accent" = RColorBrewer::brewer.pal(min(8, length(all_genres)), "Accent"),
+                     
+                     "viridis" = viridis::viridis(length(all_genres)),
+                     "plasma" = viridis::plasma(length(all_genres)),
+                     "inferno" = viridis::inferno(length(all_genres)),
+                     "magma" = viridis::magma(length(all_genres)),
+                     "cividis" = viridis::cividis(length(all_genres)),
+                     "turbo" = viridis::turbo(length(all_genres))
+    )
+    
+    # Handle cases where palette has fewer colors than genres
+    if(length(colors) < length(all_genres)) {
+      colors <- rep(colors, length.out = length(all_genres))
+    }
+    
+    # Create named vector
+    names(colors) <- all_genres
+    return(colors)
+  })
+  
+  # Color preview
+  output$color_preview <- renderUI({
+    colors <- get_genre_colors()
+    preview_colors <- head(colors, 8)  # Show first 8 colors
+    
+    color_divs <- lapply(1:length(preview_colors), function(i) {
+      div(style = paste0("width: ", 100/length(preview_colors), "%; height: 100%; ",
+                         "background-color: ", preview_colors[i], "; ",
+                         "display: inline-block; margin: 0;"))
+    })
+    
+    div(style = "width: 100%; height: 100%; display: flex;", color_divs)
   })
   
   # Genre selection state management
@@ -717,7 +810,7 @@ server <- function(input, output, session) {
       )
   })
   
-  # Enhanced scatterplot with color coding
+  # Enhanced scatterplot with color coding - UPDATED FOR CONSISTENT COLORS
   output$movie_scatter <- renderPlotly({
     filtered_data <- movies_with_stats() %>%
       filter(
@@ -768,16 +861,17 @@ server <- function(input, output, session) {
           drop = FALSE
         )
     } else if (input$color_by == "genre") {
-      # Use a color palette that works well for many categories
+      # USE CONSISTENT GENRE COLORS
+      genre_colors <- get_genre_colors()
       p <- p + geom_point(aes(color = dominant_genre), alpha = 0.7) +
-        scale_color_viridis_d(name = "Main Genre", option = "turbo")
+        scale_color_manual(values = genre_colors, name = "Main Genre", na.value = "#CCCCCC")
     } else {
       p <- p + geom_point(alpha = 0.6, color = "steelblue")
     }
     
     p <- p +
       scale_size_continuous(range = c(1, 10), name = "") +
-      labs(title = "Interactive Movie Explorer - Release Year vs. Average Rating",
+      labs(title = "",
            x = "Release Year", y = "Average Rating") +
       theme_minimal() +
       ylim(0.5, 5)
@@ -863,19 +957,19 @@ server <- function(input, output, session) {
   })
   
   output$total_ratings <- renderValueBox({
-    valueBox(value = format(nrow(sample_data()$ratings), big.mark = ","), subtitle = "Total Ratings", icon = icon("star"), color = "yellow")
+    valueBox(value = format(nrow(sample_data()$ratings), big.mark = ","), subtitle = "Total Ratings", icon = icon("star"), color = "blue")
   })
   
   output$total_users <- renderValueBox({
-    valueBox(value = length(unique(sample_data()$ratings$userId)), subtitle = "Total Users", icon = icon("users"), color = "green")
+    valueBox(value = length(unique(sample_data()$ratings$userId)), subtitle = "Total Users", icon = icon("users"), color = "blue")
   })
   
   output$total_tags <- renderValueBox({
-    valueBox(value = nrow(sample_data()$tags), subtitle = "Total Tags", icon = icon("tags"), color = "purple")
+    valueBox(value = nrow(sample_data()$tags), subtitle = "Total Tags", icon = icon("tags"), color = "blue")
   })
   
   output$avg_rating <- renderValueBox({
-    valueBox(value = round(mean(sample_data()$ratings$rating), 2), subtitle = "Average Rating", icon = icon("star-half-alt"), color = "orange")
+    valueBox(value = round(mean(sample_data()$ratings$rating), 2), subtitle = "Average Rating", icon = icon("star-half-alt"), color = "blue")
   })
   
   output$date_range <- renderValueBox({
@@ -884,7 +978,7 @@ server <- function(input, output, session) {
     min_date <- format(min(dates), "%d/%m/%y")
     max_date <- format(max(dates), "%d/%m/%y")
     date_range <- paste(min_date, "-", max_date)
-    valueBox(value = date_range, subtitle = "Rating Period", icon = icon("calendar"), color = "red")
+    valueBox(value = date_range, subtitle = "Rating Period", icon = icon("calendar"), color = "blue")
   })
   
   # Dataset structure table
@@ -948,7 +1042,7 @@ server <- function(input, output, session) {
     ggplotly(p)
   })
   
-  # Genre distribution plot
+  # Genre distribution plot - UPDATED FOR CONSISTENT COLORS
   output$genre_distribution <- renderPlotly({
     genres_expanded <- sample_data()$movies %>%
       mutate(genres_split = strsplit(genres, "\\|")) %>%
@@ -959,8 +1053,12 @@ server <- function(input, output, session) {
       arrange(desc(count)) %>%
       head(15)
     
+    # USE CONSISTENT GENRE COLORS
+    genre_colors <- get_genre_colors()
+    
     p <- ggplot(genres_expanded, aes(x = reorder(genres_split, count), y = count)) +
-      geom_bar(stat = "identity", fill = "coral") +
+      geom_bar(stat = "identity", aes(fill = genres_split)) +
+      scale_fill_manual(values = genre_colors, guide = "none") +
       coord_flip() +
       labs(title = "Top 15 Movie Genres", x = "Genre", y = "Number of Movies") +
       theme_minimal()
@@ -1034,7 +1132,7 @@ server <- function(input, output, session) {
     
     if(input$showPoints) {
       p <- p + geom_point(aes(size = count), alpha = 0.7) +
-        scale_size_continuous(range = c(2, 6), name = "# Ratings")
+        scale_size_continuous(range = c(2, 6), name = "")
     }
     
     if(input$showTrend) {
@@ -1137,7 +1235,7 @@ server <- function(input, output, session) {
   })
   
   output$user_avg_rating <- renderValueBox({
-    valueBox(value = round(mean(user_data()$rating), 2), subtitle = "Average Rating", icon = icon("chart-line"), color = "green")
+    valueBox(value = round(mean(user_data()$rating), 2), subtitle = "Average Rating", icon = icon("chart-line"), color = "blue")
   })
   
   output$user_active_years <- renderValueBox({
@@ -1145,7 +1243,7 @@ server <- function(input, output, session) {
       summarise(years = n_distinct(year)) %>%
       pull(years)
     
-    valueBox(value = active_years, subtitle = "Active Years", icon = icon("calendar"), color = "yellow")
+    valueBox(value = active_years, subtitle = "Active Years", icon = icon("calendar"), color = "blue")
   })
   
   # User statistics text
@@ -1167,25 +1265,23 @@ server <- function(input, output, session) {
     }
   })
   
-  # User rating distribution
+  # User rating distribution - FIXED TO REMOVE GRADIENT
   output$user_rating_dist <- renderPlotly({
     rating_summary <- user_data() %>%
       count(rating) %>%
       complete(rating = 1:5, fill = list(n = 0))
     
     p <- rating_summary %>%
-      ggplot(aes(x = factor(rating), y = n, fill = factor(rating))) +
-      geom_col() +
-      scale_fill_brewer(type = "seq", palette = "Blues") +
+      ggplot(aes(x = factor(rating), y = n)) +
+      geom_col(fill = "steelblue") +
       labs(title = "Rating Distribution", x = "Rating", y = "Count") +
       theme_minimal() +
-      theme(legend.position = "none") +
       scale_x_discrete(drop = FALSE)
     
     ggplotly(p)
   })
   
-  # User genre distribution
+  # User genre distribution - UPDATED FOR CONSISTENT COLORS
   output$user_genre_dist <- renderPlotly({
     user_genres <- user_data() %>%
       left_join(sample_data()$movies, by = "movieId") %>%
@@ -1194,12 +1290,15 @@ server <- function(input, output, session) {
       count(genres, sort = TRUE) %>%
       top_n(10, n)
     
-    p <- ggplot(user_genres, aes(x = reorder(genres, n), y = n, fill = genres)) +
-      geom_col() +
+    # USE CONSISTENT GENRE COLORS
+    genre_colors <- get_genre_colors()
+    
+    p <- ggplot(user_genres, aes(x = reorder(genres, n), y = n)) +
+      geom_col(aes(fill = genres)) +
+      scale_fill_manual(values = genre_colors, guide = "none") +
       coord_flip() +
       labs(title = "Top 10 Genres Rated", x = "Genre", y = "Count") +
-      theme_minimal() +
-      theme(legend.position = "none")
+      theme_minimal()
     
     ggplotly(p)
   })
@@ -1219,9 +1318,10 @@ server <- function(input, output, session) {
     ggplotly(p)
   })
   
-  # Reactive network data based on controls
+  # Reactive network data based on controls - UPDATED FOR CONSISTENT COLORS
   network_data_reactive <- reactive({
-    create_genre_network(sample_data()$movies, input$min_connections)
+    genre_colors <- get_genre_colors()
+    create_genre_network(sample_data()$movies, input$min_connections, genre_colors)
   })
   
   # Genre Network
@@ -1313,7 +1413,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # Tags Sunburst Chart
+  # Tags Sunburst Chart - UPDATED FOR CONSISTENT COLORS
   output$tags_sunburst <- renderPlotly({
     tryCatch({
       # Filter genres based on selection
@@ -1322,6 +1422,9 @@ server <- function(input, output, session) {
       } else {
         input$sunburst_genres
       }
+      
+      # Get consistent genre colors
+      genre_colors <- get_genre_colors()
       
       # Create genre-tag data
       genre_tag_data <- sample_data()$tags %>%
@@ -1341,9 +1444,31 @@ server <- function(input, output, session) {
                  layout(title = "No data available with current filters. Try reducing minimum tag frequency."))
       }
       
-      # Prepare data for sunburst
+      # Create color mapping for genres and tags
+      unique_genres <- unique(genre_tag_data$genres)
+      
+      # Create colors for parent nodes (genres) - use consistent colors
+      parent_colors <- sapply(unique_genres, function(genre) {
+        if(genre %in% names(genre_colors)) {
+          return(genre_colors[genre])
+        } else {
+          return("#CCCCCC")
+        }
+      })
+      
+      # Create colors for child nodes (tags) - lighter versions of parent colors
+      child_colors <- genre_tag_data %>%
+        mutate(
+          parent_color = ifelse(genres %in% names(genre_colors), 
+                                genre_colors[genres], "#CCCCCC"),
+          # Create lighter versions for tags by adjusting opacity
+          tag_color = paste0(parent_color, "80")  # Add alpha transparency
+        ) %>%
+        select(genres, tag, tag_color)
+      
+      # Prepare data for sunburst with colors
       sunburst_data <- bind_rows(
-        # Parent nodes (genres)
+        # Parent nodes (genres) with consistent colors
         genre_tag_data %>%
           group_by(genres) %>%
           summarise(total = sum(n), .groups = 'drop') %>%
@@ -1352,21 +1477,26 @@ server <- function(input, output, session) {
             labels = genres,
             parents = "",
             values = total,
-            level = "genre"
+            level = "genre",
+            colors = sapply(genres, function(g) {
+              if(g %in% names(genre_colors)) genre_colors[g] else "#CCCCCC"
+            })
           ),
         
-        # Child nodes (tags)
+        # Child nodes (tags) with lighter colors
         genre_tag_data %>%
+          left_join(child_colors, by = c("genres", "tag")) %>%
           mutate(
             ids = paste(genres, tag, sep = "-"),
             labels = tag,
             parents = genres,
             values = n,
-            level = "tag"
+            level = "tag",
+            colors = tag_color
           )
       )
       
-      # Create the sunburst plot
+      # Create the sunburst plot with consistent colors
       plot_ly(
         data = sunburst_data,
         ids = ~ids,
@@ -1376,11 +1506,12 @@ server <- function(input, output, session) {
         type = 'sunburst',
         branchvalues = 'total',
         hovertemplate = '<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percentParent}<extra></extra>',
-        maxdepth = 2
+        maxdepth = 2,
+        marker = list(colors = sunburst_data$colors)  # Apply consistent colors
       ) %>%
         layout(
           title = list(
-            text = "Movie Tags by Genre",
+            text = "",
             font = list(size = 16)
           ),
           font = list(size = 12)
