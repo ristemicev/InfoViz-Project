@@ -24,9 +24,7 @@ load_movielens_data <- function() {
   ratings$year <- year(ratings$date)
   
   # Extract release year from movie title (format: "Title (YEAR)")
-  # Use a safer approach that handles all cases
   movies$releaseYear <- sapply(movies$title, function(title) {
-    # Look for 4-digit year in parentheses at the end
     year_match <- regmatches(title, regexpr("\\((\\d{4})\\)\\s*$", title))
     if (length(year_match) > 0) {
       return(as.numeric(gsub("[()]", "", year_match)))
@@ -35,11 +33,9 @@ load_movielens_data <- function() {
     }
   }, USE.NAMES = FALSE)
   
-  # Clean title by removing year - fix the duplicate year issue
+  # Clean title by removing year
   movies$clean_title <- gsub("\\s*\\(\\d{4}\\)\\s*$", "", movies$title)
-  
   # Fix title formatting - some titles have articles moved to the end
-  # Convert "Godfather, The" back to "The Godfather"
   movies$clean_title <- gsub("^(.+), (The|A|An)$", "\\2 \\1", movies$clean_title)
   
   # Merge ratings with movie data
@@ -132,7 +128,6 @@ create_genre_network <- function(movies, min_connections = 15) {
     edges <- genre_pairs %>%
       filter(from %in% all_nodes$id, to %in% all_nodes$id) %>%
       mutate(
-        # Smooth width calculation based on weight
         width = pmax(1, pmin(8, (weight - min(weight)) / (max(weight) - min(weight)) * 7 + 1)),
         title = paste0(
           "<div style='text-align: center; font-family: Arial; padding: 8px;'>",
@@ -140,13 +135,12 @@ create_genre_network <- function(movies, min_connections = 15) {
           "<p style='margin: 3px; font-size: 16px;'><strong>", weight, "</strong> movies together</p>",
           "</div>"
         ),
-        # Blue gradient from light to dark based on weight
         color_intensity = (weight - min(weight)) / (max(weight) - min(weight)),
         color = rgb(
-          red = 0.1 + (1 - color_intensity) * 0.7,    # Light blue to dark
-          green = 0.4 + (1 - color_intensity) * 0.4,  # Adjust green component
-          blue = 0.9,                                  # Keep blue strong
-          alpha = 0.6 + color_intensity * 0.4         # Transparency gradient
+          red = 0.1 + (1 - color_intensity) * 0.7,
+          green = 0.4 + (1 - color_intensity) * 0.4,
+          blue = 0.9,
+          alpha = 0.6 + color_intensity * 0.4
         )
       ) %>%
       select(from, to, width, title, color)
@@ -167,305 +161,377 @@ ui <- dashboardPage(
   dashboardHeader(title = "InfoViz Project"),
   
   dashboardSidebar(sidebarMenu(
-    menuItem(
-      "Summary Statistics",
-      tabName = "summary",
-      icon = icon("chart-bar")
-    ),
-    menuItem(
-      "Movie Comparison", 
-      tabName = "movies",
-      icon = icon("film")
-    ),
-    menuItem(
-      "Genre Network", 
-      tabName = "network",
-      icon = icon("project-diagram")
-    ),
-    menuItem(
-      "User Analysis", 
-      tabName = "users",
-      icon = icon("user")
-    )
+    menuItem("Summary Statistics", tabName = "summary", icon = icon("chart-bar")),
+    menuItem("Movie Comparison", tabName = "movies", icon = icon("film")),
+    menuItem("Genre Network", tabName = "network", icon = icon("project-diagram")),
+    menuItem("User Analysis", tabName = "users", icon = icon("user")),
+    menuItem("Movie Explorer", tabName = "explorer", icon = icon("search"))
   )),
   
-  dashboardBody(tabItems(
-    # Summary Statistics Tab
-    tabItem(
-      tabName = "summary",
-      h2("MovieLens Dataset Overview"),
-      
-      fluidRow(
-        valueBoxOutput("total_movies"),
-        valueBoxOutput("total_ratings"),
-        valueBoxOutput("total_users")
-      ),
-      
-      fluidRow(
-        valueBoxOutput("total_tags"),
-        valueBoxOutput("avg_rating"),
-        valueBoxOutput("date_range")
-      ),
-      
-      fluidRow(
-        box(
-          title = "Dataset Structure",
-          status = "primary",
-          solidHeader = TRUE,
-          width = 6,
-          DT::dataTableOutput("dataset_structure")
+  dashboardBody(
+    # Add custom CSS for modal styling
+    tags$head(
+      tags$style(HTML("
+        .modal-dialog { margin-top: 50px; }
+        .genre-grid { 
+          display: grid; 
+          grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); 
+          gap: 8px; 
+          padding: 15px; 
+        }
+        .genre-checkbox { margin-bottom: 8px !important; }
+        .selected-genres-display { 
+          background-color: #f8f9fa; 
+          border: 1px solid #dee2e6; 
+          padding: 8px; 
+          border-radius: 4px; 
+          min-height: 40px;
+          max-height: 80px;
+          overflow-y: auto;
+        }
+      "))
+    ),
+    
+    tabItems(
+      # Summary Statistics Tab
+      tabItem(
+        tabName = "summary",
+        h2("MovieLens Dataset Overview"),
+        
+        fluidRow(
+          valueBoxOutput("total_movies"),
+          valueBoxOutput("total_ratings"),
+          valueBoxOutput("total_users")
         ),
         
-        box(
-          title = "Top 10 Most Rated Movies",
-          status = "info",
-          solidHeader = TRUE,
-          width = 6,
-          DT::dataTableOutput("top_movies")
-        )
-      ),
-      
-      fluidRow(
-        box(
-          title = "Rating Distribution",
-          status = "success",
-          solidHeader = TRUE,
-          width = 6,
-          plotlyOutput("rating_distribution")
+        fluidRow(
+          valueBoxOutput("total_tags"),
+          valueBoxOutput("avg_rating"),
+          valueBoxOutput("date_range")
         ),
         
-        box(
-          title = "Genre Distribution",
-          status = "warning",
-          solidHeader = TRUE,
-          width = 6,
-          plotlyOutput("genre_distribution")
-        )
-      )
-    ),
-    
-    # User Analysis Tab
-    tabItem(
-      tabName = "users",
-      fluidRow(
-        column(3,
-               box(
-                 title = "User Selection",
-                 status = "primary",
-                 solidHeader = TRUE,
-                 width = NULL,
-                 selectizeInput("selected_user", "Select User ID:",
-                                choices = NULL,
-                                options = list(placeholder = "Type to search...")),
-                 br(),
-                 h5("User Statistics:"),
-                 verbatimTextOutput("user_stats_text")
-               )
-        ),
-        column(9,
-               fluidRow(
-                 column(4,
-                        valueBoxOutput("user_total_ratings", width = NULL)
-                 ),
-                 column(4,
-                        valueBoxOutput("user_avg_rating", width = NULL)
-                 ),
-                 column(4,
-                        valueBoxOutput("user_active_years", width = NULL)
-                 )
-               ),
-               box(
-                 title = "Rating Distribution",
-                 status = "primary",
-                 solidHeader = TRUE,
-                 width = NULL,
-                 height = "350px",
-                 plotlyOutput("user_rating_dist", height = "300px")
-               )
-        )
-      ),
-      fluidRow(
-        box(
-          title = "Genre Preferences",
-          status = "primary",
-          solidHeader = TRUE,
-          width = 6,
-          plotlyOutput("user_genre_dist", height = "400px")
-        ),
-        box(
-          title = "Rating Timeline",
-          status = "primary",
-          solidHeader = TRUE,
-          width = 6,
-          plotlyOutput("user_timeline", height = "400px")
-        )
-      )
-    ),
-    
-    # Genre Network Tab
-    tabItem(
-      tabName = "network",
-      fluidRow(
-        column(3,
-               box(
-                 title = "Network Controls", 
-                 status = "primary", 
-                 solidHeader = TRUE,
-                 width = NULL,
-                 selectInput("layout_type", "Layout Style:",
-                             choices = list(
-                               "Force-directed" = "layout_with_fr",
-                               "Circular" = "layout_in_circle", 
-                               "Grid" = "layout_on_grid"
-                             ),
-                             selected = "layout_with_fr"),
-                 
-                 sliderInput("min_connections", "Minimum Co-occurrences:",
-                             min = 10, max = 300, value = 30, step = 10),
-                 
-                 hr(),
-                 
-                 h5("Network Statistics:"),
-                 verbatimTextOutput("network_stats", placeholder = TRUE)
-               ),
-               
-               # MOVED: How to Use box right below controls
-               box(
-                 title = "How to Use This Visualization",
-                 status = "info",
-                 width = NULL,
-                 tags$ul(
-                   tags$li(strong("Node size:"), " Larger circles = more movies in that genre"),
-                   tags$li(strong("Edge thickness:"), " Thicker lines = genres appear together more often"),
-                   tags$li(strong("Edge colors:"), " See connection strength legend"),
-                   tags$li(strong("Hover:"), " Mouse over nodes/edges for detailed information"),
-                   tags$li(strong("Click:"), " Click nodes to highlight their connections"),
-                   tags$li(strong("Navigation:"), " Use mouse wheel to zoom, drag to pan")
-                 )
-               )
-        ),
-        column(9,
-               box(
-                 title = "Interactive Genre Network Graph", 
-                 status = "primary", 
-                 solidHeader = TRUE,
-                 width = NULL,
-                 height = "600px",
-                 visNetworkOutput("genre_network", height = "500px")
-               )
-        )
-      ),
-      fluidRow(
-        column(6,
-               box(
-                 title = "Legend - All Genres",
-                 status = "info",
-                 width = NULL,
-                 DT::dataTableOutput("genre_legend")
-               )
-        ),
-        column(6,
-               box(
-                 title = "Connection Strength Legend",
-                 status = "info",
-                 width = NULL,
-                 div(
-                   style = "padding: 10px;",
-                   h5("Edge Gradient (Blue):"),
-                   div(style = "margin: 15px 0;",
-                       div(style = "width: 100%; height: 20px; background: linear-gradient(to right, rgba(26,107,230,0.6), rgba(13,54,115,1)); border: 1px solid #ccc; border-radius: 5px;")
-                   ),
-                   div(style = "display: flex; justify-content: space-between; font-size: 12px; margin-top: 5px;",
-                       span("Weak connections"),
-                       span("Strong connections")
-                   ),
-                   hr(),
-                   p(style = "font-size: 13px; color: #666;", 
-                     "• Darker blue = more movies together", br(),
-                     "• Thicker lines = stronger connections", br(),
-                     "• Both color and thickness increase with strength")
-                 )
-               )
-        )
-      )
-    ),
-    
-    # Movie Comparison Tab
-    tabItem(
-      tabName = "movies", 
-      fluidRow(
-        box(
-          width = 12,
-          title = "Movie Rating Evolution Over Time",
-          status = "primary",
-          solidHeader = TRUE,
-          
-          # Row for controls
-          fluidRow(
-            column(
-              6,
-              selectizeInput(
-                "selectedMovies",
-                "Select Movies to Compare:",
-                choices = NULL,
-                multiple = TRUE,
-                options = list(
-                  maxItems = 5, 
-                  placeholder = "Search movies...",
-                  highlight = FALSE,
-                  render = I('{
-                    option: function(item, escape) {
-                      return "<div>" + escape(item.label) + "</div>";
-                    }
-                  }')
-                )
-              )
-            ),
-            column(
-              6,
-              sliderInput(
-                "yearRange",
-                "Select Year Range:",
-                min = 1995,
-                max = 2018,
-                value = c(2000, 2015),
-                step = 1,
-                sep = ""
-              )
-            )
+        fluidRow(
+          box(
+            title = "Dataset Structure",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            DT::dataTableOutput("dataset_structure")
           ),
           
-          # Row for additional options
-          fluidRow(
-            column(6, checkboxInput("showTrend", "Show Trend Line", value = TRUE)),
-            column(6, checkboxInput("showPoints", "Show Data Points", value = TRUE))
+          box(
+            title = "Top 10 Most Rated Movies",
+            status = "info",
+            solidHeader = TRUE,
+            width = 6,
+            DT::dataTableOutput("top_movies")
+          )
+        ),
+        
+        fluidRow(
+          box(
+            title = "Rating Distribution",
+            status = "success",
+            solidHeader = TRUE,
+            width = 6,
+            plotlyOutput("rating_distribution")
+          ),
+          
+          box(
+            title = "Genre Distribution",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 6,
+            plotlyOutput("genre_distribution")
           )
         )
-      ), 
+      ),
       
-      fluidRow(
-        box(
-          width = 12, 
-          withSpinner(plotlyOutput("movieSeriesPlot", height = "500px"))
-        )
-      ), 
-      
-      fluidRow(
-        box(
-          width = 6,
-          title = "Movie Statistics",
-          status = "info",
-          withSpinner(DT::dataTableOutput("movieStats"))
+      # Movie Explorer Tab
+      tabItem(
+        tabName = "explorer",
+        fluidRow(
+          column(3,
+                 box(
+                   title = "Movie Filters",
+                   status = "primary",
+                   solidHeader = TRUE,
+                   width = NULL,
+                   
+                   sliderInput("rating_range", "Rating Range:",
+                               min = 0.5, max = 5, value = c(0.5, 5), step = 0.1),
+                   
+                   sliderInput("min_ratings", "Minimum Number of Ratings:",
+                               min = 1, max = 100, value = 10, step = 1),
+                   
+                   sliderInput("year_filter", "Release Year Range:",
+                               min = 1920, max = 2018, value = c(1990, 2018), step = 1),
+                   
+                   # Genre selection with popup
+                   div(
+                     h5("Selected Genres:"),
+                     div(
+                       id = "selected_genres_display",
+                       class = "selected-genres-display",
+                       textOutput("selected_genres_text")
+                     ),
+                     br(),
+                     div(style = "display: flex; gap: 10px;",
+                         actionButton("btn_select_genres", "Select Genres", 
+                                      icon = icon("tags"), class = "btn-primary btn-sm"),
+                         actionButton("btn_reset", "Reset All", class = "btn-sm btn-warning")
+                     ),
+                     br()
+                   ),
+                   
+                   # Color coding option
+                   radioButtons("color_by", "Color Points By:",
+                                choices = list("None" = "none", 
+                                               "Decade" = "decade",
+                                               "Popularity" = "popularity",
+                                               "Quality Tier" = "quality",
+                                               "Genre" = "genre"),
+                                selected = "none")
+                 )
+          ),
+          
+          column(9,
+                 box(
+                   title = "Interactive Movie Explorer",
+                   status = "primary",
+                   solidHeader = TRUE,
+                   width = NULL,
+                   height = "600px",
+                   withSpinner(plotlyOutput("movie_scatter", height = "550px"))
+                 )
+          )
         ),
-        box(
-          width = 6,
-          title = "Rating Analysis",
-          status = "info",
-          withSpinner(verbatimTextOutput("ratingAnalysis"))
+        
+        fluidRow(
+          box(
+            title = "Top Movies (Filtered Results)",
+            status = "info",
+            solidHeader = TRUE,
+            width = 12,
+            DT::dataTableOutput("filtered_movies_table")
+          )
+        ),
+        
+        fluidRow(
+          box(
+            title = "Filter Summary",
+            status = "info",
+            solidHeader = TRUE,
+            width = 6,
+            verbatimTextOutput("filter_summary")
+          ),
+          
+          box(
+            title = "How to Use This Visualization",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            tags$div(
+              tags$h5("Understanding the Plot:"),
+              tags$ul(
+                tags$li(strong("X-axis:"), " Movie release year"),
+                tags$li(strong("Y-axis:"), " Average user rating (1-5 stars)"),
+                tags$li(strong("Point size:"), " Number of ratings (bigger = more popular)")
+              ),
+              
+              tags$h5("Color Options:"),
+              tags$ul(
+                tags$li(strong("None:"), " All points blue"),
+                tags$li(strong("Decade:"), " Color by time period (1980s, 1990s, etc.)"),
+                tags$li(strong("Popularity:"), " Low (<50), Medium (50-99), High (100+) ratings"),
+                tags$li(strong("Quality Tier:"), " Rating categories from Poor to Excellent"),
+                tags$li(strong("Genre:"), " Color by main genre (first listed)")
+              ),
+              
+              tags$h5("Interaction:"),
+              tags$ul(
+                tags$li(strong("Hover:"), " See movie details"),
+                tags$li(strong("Zoom:"), " Mouse wheel to zoom in/out"),
+                tags$li(strong("Pan:"), " Click and drag to move around")
+              )
+            )
+          )
+        )
+      ),
+      
+      # User Analysis Tab
+      tabItem(
+        tabName = "users",
+        fluidRow(
+          column(3,
+                 box(
+                   title = "User Selection",
+                   status = "primary",
+                   solidHeader = TRUE,
+                   width = NULL,
+                   selectizeInput("selected_user", "Select User ID:",
+                                  choices = NULL,
+                                  options = list(placeholder = "Type to search...")),
+                   br(),
+                   h5("User Statistics:"),
+                   verbatimTextOutput("user_stats_text")
+                 )
+          ),
+          column(9,
+                 fluidRow(
+                   column(4, valueBoxOutput("user_total_ratings", width = NULL)),
+                   column(4, valueBoxOutput("user_avg_rating", width = NULL)),
+                   column(4, valueBoxOutput("user_active_years", width = NULL))
+                 ),
+                 box(
+                   title = "Rating Distribution",
+                   status = "primary",
+                   solidHeader = TRUE,
+                   width = NULL,
+                   height = "350px",
+                   plotlyOutput("user_rating_dist", height = "300px")
+                 )
+          )
+        ),
+        fluidRow(
+          box(
+            title = "Genre Preferences",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            plotlyOutput("user_genre_dist", height = "400px")
+          ),
+          box(
+            title = "Rating Timeline",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            plotlyOutput("user_timeline", height = "400px")
+          )
+        )
+      ),
+      
+      # Genre Network Tab
+      tabItem(
+        tabName = "network",
+        fluidRow(
+          column(3,
+                 box(
+                   title = "Network Controls", 
+                   status = "primary", 
+                   solidHeader = TRUE,
+                   width = NULL,
+                   selectInput("layout_type", "Layout Style:",
+                               choices = list(
+                                 "Force-directed" = "layout_with_fr",
+                                 "Circular" = "layout_in_circle", 
+                                 "Grid" = "layout_on_grid"
+                               ),
+                               selected = "layout_with_fr"),
+                   
+                   sliderInput("min_connections", "Minimum Co-occurrences:",
+                               min = 10, max = 300, value = 30, step = 10),
+                   
+                   hr(),
+                   
+                   h5("Network Statistics:"),
+                   verbatimTextOutput("network_stats", placeholder = TRUE)
+                 ),
+                 
+                 box(
+                   title = "How to Use This Visualization",
+                   status = "info",
+                   width = NULL,
+                   tags$ul(
+                     tags$li(strong("Node size:"), " Larger circles = more movies in that genre"),
+                     tags$li(strong("Edge thickness:"), " Thicker lines = genres appear together more often"),
+                     tags$li(strong("Hover:"), " Mouse over nodes/edges for detailed information"),
+                     tags$li(strong("Click:"), " Click nodes to highlight their connections"),
+                     tags$li(strong("Navigation:"), " Use mouse wheel to zoom, drag to pan")
+                   )
+                 )
+          ),
+          column(9,
+                 box(
+                   title = "Interactive Genre Network Graph", 
+                   status = "primary", 
+                   solidHeader = TRUE,
+                   width = NULL,
+                   height = "600px",
+                   visNetworkOutput("genre_network", height = "500px")
+                 )
+          )
+        ),
+        fluidRow(
+          column(6,
+                 box(
+                   title = "Legend - All Genres",
+                   status = "info",
+                   width = NULL,
+                   DT::dataTableOutput("genre_legend")
+                 )
+          ),
+          column(6,
+                 box(
+                   title = "Connection Strength Legend",
+                   status = "info",
+                   width = NULL,
+                   div(
+                     style = "padding: 10px;",
+                     h5("Edge Gradient (Blue):"),
+                     div(style = "margin: 15px 0;",
+                         div(style = "width: 100%; height: 20px; background: linear-gradient(to right, rgba(26,107,230,0.6), rgba(13,54,115,1)); border: 1px solid #ccc; border-radius: 5px;")
+                     ),
+                     div(style = "display: flex; justify-content: space-between; font-size: 12px; margin-top: 5px;",
+                         span("Weak connections"),
+                         span("Strong connections")
+                     )
+                   )
+                 )
+          )
+        )
+      ),
+      
+      # Movie Comparison Tab
+      tabItem(
+        tabName = "movies", 
+        fluidRow(
+          box(
+            width = 12,
+            title = "Movie Rating Evolution Over Time",
+            status = "primary",
+            solidHeader = TRUE,
+            
+            fluidRow(
+              column(6,
+                     selectizeInput("selectedMovies", "Select Movies to Compare:",
+                                    choices = NULL, multiple = TRUE,
+                                    options = list(maxItems = 5, placeholder = "Search movies..."))),
+              column(6,
+                     sliderInput("yearRange", "Select Year Range:",
+                                 min = 1995, max = 2018, value = c(2000, 2015), step = 1, sep = ""))
+            ),
+            
+            fluidRow(
+              column(6, checkboxInput("showTrend", "Show Trend Line", value = TRUE)),
+              column(6, checkboxInput("showPoints", "Show Data Points", value = TRUE))
+            )
+          )
+        ), 
+        
+        fluidRow(
+          box(width = 12, withSpinner(plotlyOutput("movieSeriesPlot", height = "500px")))
+        ), 
+        
+        fluidRow(
+          box(width = 6, title = "Movie Statistics", status = "info",
+              withSpinner(DT::dataTableOutput("movieStats"))),
+          box(width = 6, title = "Rating Analysis", status = "info",
+              withSpinner(verbatimTextOutput("ratingAnalysis")))
         )
       )
     )
-  ))
+  )
 )
 
 # Define Server
@@ -475,61 +541,275 @@ server <- function(input, output, session) {
     load_movielens_data()
   })
   
-  # Update year slider range based on actual data
-  observe({
-    data_obj <- sample_data()
-    year_range <- range(data_obj$movie_time_series$year, na.rm = TRUE)
+  # Genre selection state management
+  values <- reactiveValues(
+    selected_genres = c("Action", "Comedy", "Drama", "Thriller")
+  )
+  
+  # Show genre selection modal
+  observeEvent(input$btn_select_genres, {
+    showModal(modalDialog(
+      title = "Select Movie Genres",
+      size = "l",
+      div(
+        class = "genre-grid",
+        checkboxGroupInput("temp_genre_filter", "",
+                           choices = c("Action", "Adventure", "Animation", "Children", 
+                                       "Comedy", "Crime", "Documentary", "Drama",
+                                       "Fantasy", "Horror", "Musical", "Mystery",
+                                       "Romance", "Sci-Fi", "Thriller", "War", "Western"),
+                           selected = values$selected_genres,
+                           inline = FALSE)
+      ),
+      hr(),
+      div(style = "text-align: center;",
+          actionButton("btn_select_all_genres", "Select All", class = "btn-info btn-sm"),
+          actionButton("btn_clear_all_genres", "Clear All", class = "btn-warning btn-sm")
+      ),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("btn_apply_genres", "Apply Selection", class = "btn-success")
+      )
+    ))
+  })
+  
+  # Modal button handlers
+  observeEvent(input$btn_select_all_genres, {
+    updateCheckboxGroupInput(session, "temp_genre_filter",
+                             selected = c("Action", "Adventure", "Animation", "Children", 
+                                          "Comedy", "Crime", "Documentary", "Drama",
+                                          "Fantasy", "Horror", "Musical", "Mystery",
+                                          "Romance", "Sci-Fi", "Thriller", "War", "Western"))
+  })
+  
+  observeEvent(input$btn_clear_all_genres, {
+    updateCheckboxGroupInput(session, "temp_genre_filter", selected = character(0))
+  })
+  
+  observeEvent(input$btn_apply_genres, {
+    values$selected_genres <- input$temp_genre_filter
+    removeModal()
+  })
+  
+  # Display selected genres
+  output$selected_genres_text <- renderText({
+    if (length(values$selected_genres) == 0) {
+      "All genres selected"
+    } else if (length(values$selected_genres) <= 4) {
+      paste(values$selected_genres, collapse = ", ")
+    } else {
+      paste(length(values$selected_genres), "genres selected")
+    }
+  })
+  
+  # Reset button
+  observeEvent(input$btn_reset, {
+    updateSliderInput(session, "rating_range", value = c(0.5, 5.0))
+    updateSliderInput(session, "min_ratings", value = 10)
+    updateSliderInput(session, "year_filter", value = c(1990, 2018))
+    values$selected_genres <- c("Action", "Comedy", "Drama", "Thriller")
+    updateRadioButtons(session, "color_by", selected = "none")
+  })
+  
+  # Movie Explorer - Movies with stats
+  movies_with_stats <- reactive({
+    sample_data()$ratings %>%
+      group_by(movieId) %>%
+      summarise(
+        avg_rating = mean(rating, na.rm = TRUE),
+        num_ratings = n(),
+        .groups = 'drop'
+      ) %>%
+      left_join(sample_data()$movies, by = "movieId") %>%
+      filter(!is.na(avg_rating), !is.na(releaseYear)) %>%
+      mutate(
+        decade = paste0(floor(releaseYear/10)*10, "s"),
+        # Popularity as ordered factor (High to Low)
+        popularity = case_when(
+          num_ratings >= 100 ~ "High",
+          num_ratings >= 50 ~ "Medium", 
+          TRUE ~ "Low"
+        ),
+        popularity = factor(popularity, levels = c("High", "Medium", "Low")),
+        # Quality tier as ordered factor (Excellent to Poor)
+        quality_tier = case_when(
+          avg_rating >= 4.0 ~ "Excellent (4.0+)",
+          avg_rating >= 3.5 ~ "Good (3.5-4.0)",
+          avg_rating >= 3.0 ~ "Average (3.0-3.5)",
+          avg_rating >= 2.5 ~ "Below Avg (2.5-3.0)",
+          TRUE ~ "Poor (<2.5)"
+        ),
+        quality_tier = factor(quality_tier, levels = c(
+          "Excellent (4.0+)", 
+          "Good (3.5-4.0)", 
+          "Average (3.0-3.5)", 
+          "Below Avg (2.5-3.0)", 
+          "Poor (<2.5)"
+        )),
+        # Dominant genre (first listed)
+        dominant_genre = str_extract(genres, "^[^|]+")
+      )
+  })
+  
+  # Enhanced scatterplot with color coding
+  output$movie_scatter <- renderPlotly({
+    filtered_data <- movies_with_stats() %>%
+      filter(
+        avg_rating >= input$rating_range[1],
+        avg_rating <= input$rating_range[2],
+        num_ratings >= input$min_ratings,
+        releaseYear >= input$year_filter[1],
+        releaseYear <= input$year_filter[2]
+      )
     
-    updateSliderInput(session, "yearRange",
-                      min = year_range[1],
-                      max = year_range[2],
-                      value = c(year_range[1] + 2, year_range[2] - 2))
+    if (length(values$selected_genres) > 0) {
+      genre_pattern <- paste(values$selected_genres, collapse = "|")
+      filtered_data <- filtered_data %>%
+        filter(str_detect(genres, genre_pattern))
+    }
+    
+    # Enhanced plot with conditional coloring
+    p <- filtered_data %>%
+      ggplot(aes(x = releaseYear, y = avg_rating, size = num_ratings,
+                 text = paste("Title:", clean_title,
+                              "\nYear:", releaseYear,
+                              "\nRating:", round(avg_rating, 2),
+                              "\nNum Ratings:", scales::comma(num_ratings),
+                              "\nGenres:", genres)))
+    
+    # Conditional coloring with ordered legends
+    if (input$color_by == "decade") {
+      p <- p + geom_point(aes(color = decade), alpha = 0.7) +
+        scale_color_viridis_d(name = "Decade")
+    } else if (input$color_by == "popularity") {
+      p <- p + geom_point(aes(color = popularity), alpha = 0.7) +
+        scale_color_manual(
+          values = c("High" = "#90EE90", "Medium" = "#98D8E8", "Low" = "#FFA07A"),
+          name = "Popularity",
+          drop = FALSE
+        )
+    } else if (input$color_by == "quality") {
+      p <- p + geom_point(aes(color = quality_tier), alpha = 0.7) +
+        scale_color_manual(
+          values = c(
+            "Excellent (4.0+)" = "#2E8B57",      # Dark green
+            "Good (3.5-4.0)" = "#32CD32",        # Lime green  
+            "Average (3.0-3.5)" = "#FFD700",     # Gold
+            "Below Avg (2.5-3.0)" = "#FF8C00",   # Dark orange
+            "Poor (<2.5)" = "#DC143C"            # Crimson
+          ), 
+          name = "Quality",
+          drop = FALSE
+        )
+    } else if (input$color_by == "genre") {
+      # Use a color palette that works well for many categories
+      p <- p + geom_point(aes(color = dominant_genre), alpha = 0.7) +
+        scale_color_viridis_d(name = "Main Genre", option = "turbo")
+    } else {
+      p <- p + geom_point(alpha = 0.6, color = "steelblue")
+    }
+    
+    p <- p +
+      scale_size_continuous(range = c(1, 10), name = "") +
+      labs(title = "Interactive Movie Explorer - Release Year vs. Average Rating",
+           x = "Release Year", y = "Average Rating") +
+      theme_minimal() +
+      ylim(0.5, 5)
+    
+    ggplotly(p, tooltip = "text")
+  })
+  
+  # Filtered movies table
+  output$filtered_movies_table <- DT::renderDataTable({
+    filtered_data <- movies_with_stats() %>%
+      filter(
+        avg_rating >= input$rating_range[1],
+        avg_rating <= input$rating_range[2],
+        num_ratings >= input$min_ratings,
+        releaseYear >= input$year_filter[1],
+        releaseYear <= input$year_filter[2]
+      )
+    
+    if (length(values$selected_genres) > 0) {
+      genre_pattern <- paste(values$selected_genres, collapse = "|")
+      filtered_data <- filtered_data %>%
+        filter(str_detect(genres, genre_pattern))
+    }
+    
+    display_data <- filtered_data %>%
+      select(clean_title, releaseYear, avg_rating, num_ratings) %>%
+      arrange(desc(avg_rating)) %>%
+      head(15) %>%
+      rename(
+        Title = clean_title,
+        Year = releaseYear,
+        `Avg Rating` = avg_rating,
+        `# Ratings` = num_ratings
+      ) %>%
+      mutate(`Avg Rating` = round(`Avg Rating`, 2))
+    
+    DT::datatable(display_data, 
+                  options = list(pageLength = 10, dom = 't'),
+                  rownames = FALSE)
+  })
+  
+  # Advanced filter summary
+  output$filter_summary <- renderText({
+    filtered_data <- movies_with_stats() %>%
+      filter(
+        avg_rating >= input$rating_range[1],
+        avg_rating <= input$rating_range[2],
+        num_ratings >= input$min_ratings,
+        releaseYear >= input$year_filter[1],
+        releaseYear <= input$year_filter[2]
+      )
+    
+    if (length(values$selected_genres) > 0) {
+      genre_pattern <- paste(values$selected_genres, collapse = "|")
+      filtered_data <- filtered_data %>%
+        filter(str_detect(genres, genre_pattern))
+    }
+    
+    total_movies <- nrow(movies_with_stats())
+    filtered_movies <- nrow(filtered_data)
+    avg_rating_filtered <- round(mean(filtered_data$avg_rating, na.rm = TRUE), 2)
+    
+    paste(
+      "=== FILTER RESULTS ===",
+      paste("Movies shown:", scales::comma(filtered_movies), "of", scales::comma(total_movies)),
+      paste("Percentage:", round(filtered_movies/total_movies * 100, 1), "%"),
+      paste("Average rating:", avg_rating_filtered),
+      "",
+      "=== ACTIVE FILTERS ===",
+      paste("• Rating:", input$rating_range[1], "-", input$rating_range[2]),
+      paste("• Min ratings:", input$min_ratings, "+"),
+      paste("• Years:", input$year_filter[1], "-", input$year_filter[2]),
+      paste("• Genres:", ifelse(length(values$selected_genres) > 0, 
+                                paste(values$selected_genres, collapse = ", "), "All")),
+      paste("• Color by:", input$color_by),
+      sep = "\n"
+    )
   })
   
   # Value boxes
   output$total_movies <- renderValueBox({
-    valueBox(
-      value = nrow(sample_data()$movies),
-      subtitle = "Total Movies",
-      icon = icon("film"),
-      color = "blue"
-    )
+    valueBox(value = nrow(sample_data()$movies), subtitle = "Total Movies", icon = icon("film"), color = "blue")
   })
   
   output$total_ratings <- renderValueBox({
-    valueBox(
-      value = format(nrow(sample_data()$ratings), big.mark = ","),
-      subtitle = "Total Ratings",
-      icon = icon("star"),
-      color = "yellow"
-    )
+    valueBox(value = format(nrow(sample_data()$ratings), big.mark = ","), subtitle = "Total Ratings", icon = icon("star"), color = "yellow")
   })
   
   output$total_users <- renderValueBox({
-    valueBox(
-      value = length(unique(sample_data()$ratings$userId)),
-      subtitle = "Total Users",
-      icon = icon("users"),
-      color = "green"
-    )
+    valueBox(value = length(unique(sample_data()$ratings$userId)), subtitle = "Total Users", icon = icon("users"), color = "green")
   })
   
   output$total_tags <- renderValueBox({
-    valueBox(
-      value = nrow(sample_data()$tags),
-      subtitle = "Total Tags",
-      icon = icon("tags"),
-      color = "purple"
-    )
+    valueBox(value = nrow(sample_data()$tags), subtitle = "Total Tags", icon = icon("tags"), color = "purple")
   })
   
   output$avg_rating <- renderValueBox({
-    valueBox(
-      value = round(mean(sample_data()$ratings$rating), 2),
-      subtitle = "Average Rating",
-      icon = icon("star-half-alt"),
-      color = "orange"
-    )
+    valueBox(value = round(mean(sample_data()$ratings$rating), 2), subtitle = "Average Rating", icon = icon("star-half-alt"), color = "orange")
   })
   
   output$date_range <- renderValueBox({
@@ -538,13 +818,7 @@ server <- function(input, output, session) {
     min_date <- format(min(dates), "%d/%m/%y")
     max_date <- format(max(dates), "%d/%m/%y")
     date_range <- paste(min_date, "-", max_date)
-    
-    valueBox(
-      value = date_range,
-      subtitle = "Rating Period",
-      icon = icon("calendar"),
-      color = "red"
-    )
+    valueBox(value = date_range, subtitle = "Rating Period", icon = icon("calendar"), color = "red")
   })
   
   # Dataset structure table
@@ -573,11 +847,7 @@ server <- function(input, output, session) {
     )
     
     structure_data
-  }, options = list(
-    pageLength = 10,
-    searching = FALSE,
-    paging = FALSE
-  ))
+  }, options = list(pageLength = 10, searching = FALSE, paging = FALSE))
   
   # Top movies table
   output$top_movies <- DT::renderDataTable({
@@ -593,16 +863,10 @@ server <- function(input, output, session) {
       head(10) %>%
       left_join(data_obj$movies, by = "movieId") %>%
       select(clean_title, rating_count, avg_rating) %>%
-      rename(Title = clean_title,
-             `Rating Count` = rating_count,
-             `Avg Rating` = avg_rating)
+      rename(Title = clean_title, `Rating Count` = rating_count, `Avg Rating` = avg_rating)
     
     top_movies
-  }, options = list(
-    pageLength = 10,
-    searching = FALSE,
-    paging = FALSE
-  ))
+  }, options = list(pageLength = 10, searching = FALSE, paging = FALSE))
   
   # Rating distribution plot
   output$rating_distribution <- renderPlotly({
@@ -620,7 +884,6 @@ server <- function(input, output, session) {
   
   # Genre distribution plot
   output$genre_distribution <- renderPlotly({
-    # Extract and count genres
     genres_expanded <- sample_data()$movies %>%
       mutate(genres_split = strsplit(genres, "\\|")) %>%
       tidyr::unnest(genres_split) %>%
@@ -639,17 +902,15 @@ server <- function(input, output, session) {
     ggplotly(p)
   })
   
-  # Update movie choices for comparison - fix duplicate year issue
+  # Update movie choices for comparison
   observe({
     data_obj <- sample_data()
     
-    # Get movies with sufficient ratings for meaningful analysis
     movie_rating_counts <- data_obj$movie_time_series %>%
       group_by(movieId) %>%
       summarise(rating_count = n(), .groups = "drop") %>%
-      filter(rating_count >= 3)  # At least 3 years of data
+      filter(rating_count >= 3)
     
-    # Create clean movie choices without duplicate years
     movie_choices <- data_obj$movie_time_series %>%
       filter(movieId %in% movie_rating_counts$movieId) %>%
       select(movieId, title, releaseYear) %>%
@@ -662,22 +923,23 @@ server <- function(input, output, session) {
                          selected = head(movie_choices$movieId, 3))
   })
   
-  # Update user choices for User Analysis tab
+  # Update year slider range
   observe({
-    user_choices <- sort(unique(sample_data()$ratings$userId))
-    updateSelectizeInput(session, "selected_user",
-                         choices = user_choices,
-                         selected = user_choices[1],
-                         server = TRUE)
+    data_obj <- sample_data()
+    year_range <- range(data_obj$movie_time_series$year, na.rm = TRUE)
+    
+    updateSliderInput(session, "yearRange",
+                      min = year_range[1],
+                      max = year_range[2],
+                      value = c(year_range[1] + 2, year_range[2] - 2))
   })
   
-  # Movie Series Plot - FIXED VERSION WITHOUT GEOM_SMOOTH
+  # Movie Series Plot
   output$movieSeriesPlot <- renderPlotly({
     req(input$selectedMovies, input$yearRange)
     
     data_obj <- sample_data()
     
-    # Filter data by selected movies and year range
     movie_data <- data_obj$movie_time_series %>%
       filter(movieId %in% input$selectedMovies) %>%
       filter(year >= input$yearRange[1] & year <= input$yearRange[2])
@@ -689,14 +951,11 @@ server <- function(input, output, session) {
       return(ggplotly(p))
     }
     
-    # Create the base plot - ALWAYS show the connecting lines
     p <- ggplot(movie_data, aes(x = year, y = avgRating, color = title, group = title)) +
-      geom_line(linewidth = 1.2, alpha = 0.8) +  # Always show connecting lines
+      geom_line(linewidth = 1.2, alpha = 0.8) +
       scale_color_brewer(type = "qual", palette = "Set2") +
       labs(title = "Movie Rating Evolution Over Time",
-           x = "Year", 
-           y = "Average Rating", 
-           color = "Movie") +
+           x = "Year", y = "Average Rating", color = "Movie") +
       scale_y_continuous(limits = c(1, 5)) +
       scale_x_continuous(breaks = seq(input$yearRange[1], input$yearRange[2], by = 1)) +
       theme_minimal() +
@@ -707,13 +966,11 @@ server <- function(input, output, session) {
         axis.text.x = element_text(angle = 45, hjust = 1)
       )
     
-    # Add points if requested
     if(input$showPoints) {
       p <- p + geom_point(aes(size = count), alpha = 0.7) +
         scale_size_continuous(range = c(2, 6), name = "# Ratings")
     }
     
-    # Add TREND LINES (smoothed) if requested - this is the actual trend line
     if(input$showTrend) {
       p <- p + geom_smooth(method = "lm", se = FALSE, alpha = 0.6, linewidth = 0.8, linetype = "dashed")
     }
@@ -756,7 +1013,6 @@ server <- function(input, output, session) {
     
     if(nrow(data) == 0) return("No data available for selected criteria.")
     
-    # Calculate trends for each movie
     trends <- data %>%
       group_by(movieId, title) %>%
       summarise(
@@ -776,8 +1032,7 @@ server <- function(input, output, session) {
           rating_trend > 0.05 ~ "↗ IMPROVING",
           rating_trend < -0.05 ~ "↘ DECLINING", 
           TRUE ~ "→ STABLE"
-        ),
-        trend_strength = abs(rating_trend)
+        )
       )
     
     output_text <- paste0("Analysis for ", input$yearRange[1], "-", input$yearRange[2], ":\n\n")
@@ -794,6 +1049,15 @@ server <- function(input, output, session) {
     output_text
   })
   
+  # Update user choices for User Analysis tab
+  observe({
+    user_choices <- sort(unique(sample_data()$ratings$userId))
+    updateSelectizeInput(session, "selected_user",
+                         choices = user_choices,
+                         selected = user_choices[1],
+                         server = TRUE)
+  })
+  
   # User Analysis - Reactive data
   user_data <- reactive({
     req(input$selected_user)
@@ -803,21 +1067,11 @@ server <- function(input, output, session) {
   
   # User value boxes
   output$user_total_ratings <- renderValueBox({
-    valueBox(
-      value = nrow(user_data()),
-      subtitle = "Total Ratings",
-      icon = icon("star"),
-      color = "blue"
-    )
+    valueBox(value = nrow(user_data()), subtitle = "Total Ratings", icon = icon("star"), color = "blue")
   })
   
   output$user_avg_rating <- renderValueBox({
-    valueBox(
-      value = round(mean(user_data()$rating), 2),
-      subtitle = "Average Rating",
-      icon = icon("chart-line"),
-      color = "green"
-    )
+    valueBox(value = round(mean(user_data()$rating), 2), subtitle = "Average Rating", icon = icon("chart-line"), color = "green")
   })
   
   output$user_active_years <- renderValueBox({
@@ -825,12 +1079,7 @@ server <- function(input, output, session) {
       summarise(years = n_distinct(year)) %>%
       pull(years)
     
-    valueBox(
-      value = active_years,
-      subtitle = "Active Years",
-      icon = icon("calendar"),
-      color = "yellow"
-    )
+    valueBox(value = active_years, subtitle = "Active Years", icon = icon("calendar"), color = "yellow")
   })
   
   # User statistics text
@@ -854,13 +1103,18 @@ server <- function(input, output, session) {
   
   # User rating distribution
   output$user_rating_dist <- renderPlotly({
-    p <- user_data() %>%
-      ggplot(aes(x = factor(rating), fill = factor(rating))) +
-      geom_bar() +
+    rating_summary <- user_data() %>%
+      count(rating) %>%
+      complete(rating = 1:5, fill = list(n = 0))
+    
+    p <- rating_summary %>%
+      ggplot(aes(x = factor(rating), y = n, fill = factor(rating))) +
+      geom_col() +
       scale_fill_brewer(type = "seq", palette = "Blues") +
       labs(title = "Rating Distribution", x = "Rating", y = "Count") +
       theme_minimal() +
-      theme(legend.position = "none")
+      theme(legend.position = "none") +
+      scale_x_discrete(drop = FALSE)
     
     ggplotly(p)
   })
@@ -909,12 +1163,10 @@ server <- function(input, output, session) {
     tryCatch({
       network_data <- network_data_reactive()
       
-      # Ensure we have valid network data
       if(nrow(network_data$nodes) == 0 || nrow(network_data$edges) == 0) {
         return(NULL)
       }
       
-      # Create the network with improved styling
       vis <- visNetwork(network_data$nodes, network_data$edges) %>%
         visIgraphLayout(layout = input$layout_type, physics = FALSE) %>%
         visNodes(
